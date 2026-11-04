@@ -1,4 +1,5 @@
 if not game:IsLoaded() then game.Loaded:Wait() end
+local __vox_ok, __vox_res = pcall(function()
 
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
@@ -9,6 +10,10 @@ local Debris = game:GetService("Debris")
 local HttpService = game:GetService("HttpService")
 local SoundService = game:GetService("SoundService")
 local LP = Players.LocalPlayer
+if not LP then
+    pcall(function() Players:GetPropertyChangedSignal("LocalPlayer"):Wait() end)
+    LP = Players.LocalPlayer
+end
 
 local Font = Enum.Font
 local Left, Right, Center = Enum.TextXAlignment.Left, Enum.TextXAlignment.Right, Enum.TextXAlignment.Center
@@ -173,9 +178,21 @@ local function ApplyIcon(img, name)
     return false
 end
 
+-- total UIScale applied to an element (its own + all parents): screen pixels / this = local units
+local function EffScale(inst)
+    local sc = 1
+    local p = inst
+    while p and p ~= game do
+        local u = p:FindFirstChildOfClass("UIScale")
+        if u then sc = sc * u.Scale end
+        p = p.Parent
+    end
+    return math.max(sc, 0.01)
+end
+
 local function Ripple(layer, pos, color, maxS)
     maxS = maxS or 240
-    local rel = pos - layer.AbsolutePosition
+    local rel = (pos - layer.AbsolutePosition) / EffScale(layer)
     local function circle(tr)
         local c = New("Frame", {AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(rel.X, rel.Y), Size = UDim2.fromOffset(6, 6), BackgroundColor3 = color, BackgroundTransparency = tr, BorderSizePixel = 0, ZIndex = 100, Parent = layer})
         Corner(c, 999)
@@ -1535,7 +1552,7 @@ function Library:CreateWindow(cfg)
     function Window:SetCollapsed(v)
         if v == Window.Collapsed then return end
         Window.Collapsed = v
-        local curH = Holder.AbsoluteSize.Y
+        local curH = Holder.AbsoluteSize.Y / math.max(DevScale.Scale, 0.01)
         if v then fullH = curH end
         local targetH = v and 52 or (fullH or curH)
         local p = Holder.Position
@@ -1549,7 +1566,7 @@ function Library:CreateWindow(cfg)
         Tween(wIcon, 0.3, {ImageTransparency = v and 1 or 0})
         Tween(colB, 0.45, {Rotation = v and 180 or 0}, Enum.EasingStyle.Back)
         if v then
-            Tween(titleRow, 0.55, {Position = UDim2.new(0.5, -titleRow.AbsoluteSize.X / 2, 0, 12)}, Enum.EasingStyle.Back)
+            Tween(titleRow, 0.55, {Position = UDim2.new(0.5, -titleRow.AbsoluteSize.X / EffScale(titleRow) / 2, 0, 12)}, Enum.EasingStyle.Back)
             task.delay(0.3, function() if Window.Collapsed then Body.Visible = false end end)
         else
             Body.Visible = true
@@ -3441,7 +3458,7 @@ function Library:CreateWindow(cfg)
                 if v and not Window.Loading then Window:SetColor(v) end
             end})
             Tab:Slider({Name = "UI Transparency", Min = 0, Max = 0.9, Default = curTrans, Increment = 0.05, Flag = "UI_Transparency", Callback = function(v) Window:SetTransparency(v) end})
-            Tab:Toggle({Name = "Auto Device Scale", Desc = "Phone = smaller UI + buttons, tablet / PC = a bit bigger", Default = Window.AutoScale, MiniButton = false, Flag = "UI_AutoScale", Callback = function(v) Window.AutoScale = v and true or false Window:ApplyDevice() end})
+            Tab:Toggle({Name = "Auto Device Scale", Desc = "Phone = smaller floating buttons (the window keeps its size)", Default = Window.AutoScale, MiniButton = false, Flag = "UI_AutoScale", Callback = function(v) Window.AutoScale = v and true or false Window:ApplyDevice() end})
             Tab:Slider({Name = "UI Scale", Min = 0.6, Max = 1.4, Default = Window.ScaleMul or 1, Increment = 0.05, Flag = "UI_ScaleMul", Callback = function(v) Window.ScaleMul = v Window:ApplyDevice() end})
             Tab:Toggle({Name = "Performance Mode", Desc = "Lighter animations for more FPS (turns on by itself on phones)", Default = Window.Perf, MiniButton = false, Flag = "UI_Perf", Callback = function(v) Window.PerfManual = v and true or false Window.Perf = Window.PerfManual end})
             Tab:Toggle({Name = "Sea Waves", Desc = "Real animated sea inside the frame", Default = Window and Sea.On, MiniButton = false, Flag = "UI_Sea", Callback = function(v) Window:SetSea(v) end})
@@ -3602,13 +3619,14 @@ function Library:CreateWindow(cfg)
 
     -- Tabs
     local function moveSelector(tab, instant)
-        local y = tab.Btn.AbsolutePosition.Y - side.AbsolutePosition.Y
-        local h = tab.Btn.AbsoluteSize.Y
+        local es = EffScale(side)
+        local y = (tab.Btn.AbsolutePosition.Y - side.AbsolutePosition.Y) / es - 3
+        local h = tab.Btn.AbsoluteSize.Y / es + 6
         if instant then
-            selector.Position = UDim2.fromOffset(6, y)
-            selector.Size = UDim2.new(1, -12, 0, h)
+            selector.Position = UDim2.fromOffset(4, y)
+            selector.Size = UDim2.new(1, -8, 0, h)
         else
-            Tween(selector, 0.5, {Position = UDim2.fromOffset(6, y), Size = UDim2.new(1, -12, 0, h)}, Enum.EasingStyle.Back)
+            Tween(selector, 0.5, {Position = UDim2.fromOffset(4, y), Size = UDim2.new(1, -8, 0, h)}, Enum.EasingStyle.Back)
         end
     end
     sideScroll:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
@@ -3734,9 +3752,8 @@ function Library:CreateWindow(cfg)
     end
 
     -- ======================================================
-    -- Device adaption:  phone -> smaller window / open button / floating buttons (clear view)
-    --                   tablet -> normal,  PC -> a little bigger.  Never bigger than the screen.
-    -- cfg.PhoneScale / cfg.TabletScale / cfg.PCScale change the factors, cfg.AutoScale = false turns it off
+    -- Device adaption: the window keeps its size on every device, only the floating buttons get
+    -- smaller on a phone (cfg.PhoneFloatScale, default 0.85). cfg.AutoScale = false turns it off.
     -- ======================================================
     function Window:ApplyDevice(instant)
         local vp = Gui.AbsoluteSize
@@ -3746,25 +3763,17 @@ function Library:CreateWindow(cfg)
         end
         Window.Device = dev
         local auto = Window.AutoScale
-        local base = 1
-        if auto then
-            base = (dev == "Phone" and (cfg.PhoneScale or 0.72)) or (dev == "Tablet" and (cfg.TabletScale or 1)) or (cfg.PCScale or 1.1)
-        end
-        local sc = base * (Window.ScaleMul or 1)
-        local w, h = size.X.Offset, size.Y.Offset
-        if vp.X > 100 and vp.Y > 100 and w > 0 and h > 0 then
-            sc = math.min(sc, (vp.X - 16) / w, (vp.Y - 16) / h)
-        end
-        sc = math.max(sc, 0.4)
+        -- the window ALWAYS keeps its normal size (small screen or not); only the "UI Scale" slider changes it
+        local sc = math.max(Window.ScaleMul or 1, 0.4)
         if instant then DevScale.Scale = sc else Tween(DevScale, 0.3, {Scale = sc}) end
-        Window.FloatDev = auto and ((dev == "Phone" and 0.85) or (dev == "Tablet" and 1) or 1.05) or 1
-        local f = (auto and dev == "Phone") and 0.82 or 1
-        if Window.OpenButton and Window.OBBase then
-            local bs = Window.OBBase
-            Window.OpenButton.Size = UDim2.new(bs.X.Scale, bs.X.Offset * f, bs.Y.Scale, bs.Y.Offset * f)
-        end
+        -- floating buttons are the only thing that gets smaller on a phone
+        Window.FloatDev = (auto and dev == "Phone") and (cfg.PhoneFloatScale or 0.85) or 1
         for _, fl in pairs(Window.Floats) do pcall(fl.Rescale, fl) end
         if Window.PerfManual ~= nil then Window.Perf = Window.PerfManual else Window.Perf = (dev == "Phone") end
+        -- keep the tab selector exactly on its tab button
+        if Window.Active then
+            task.delay(0.4, function() pcall(moveSelector, Window.Active, true) end)
+        end
     end
     local devToken = 0
     WConn(Gui:GetPropertyChangedSignal("AbsoluteSize"), function()
@@ -3976,4 +3985,41 @@ function Library:Intro(c)
     finished.Event:Wait()
 end
 
-return Library
+-- ======================================================
+-- Safety net: no function of the library can throw into your script.
+-- Any error is printed with warn() and the call returns a harmless "null" object,
+-- so the rest of your script keeps running (and keeps building the UI).
+-- ======================================================
+local Null = {}
+setmetatable(Null, {__index = function() return function() return Null end end, __call = function() return Null end})
+Library.Null = Null
+local safeSeen = setmetatable({}, {__mode = "k"})
+local function Safe(obj)
+    if type(obj) ~= "table" or obj == Null or safeSeen[obj] then return obj end
+    safeSeen[obj] = true
+    for k, v in pairs(obj) do
+        if type(v) == "function" then
+            obj[k] = function(...)
+                local r = table.pack(pcall(v, ...))
+                if r[1] then
+                    for i = 2, r.n do
+                        if type(r[i]) == "table" then Safe(r[i]) end
+                    end
+                    return table.unpack(r, 2, r.n)
+                end
+                warn("[VOX HUB] " .. tostring(k) .. ": " .. tostring(r[2]))
+                return Null
+            end
+        end
+    end
+    return obj
+end
+local __lib = Safe(Library)
+pcall(function() local g = (getgenv and getgenv()) or _G g.VOX_HUB = __lib end)
+return __lib
+end)
+if __vox_ok and __vox_res then return __vox_res end
+warn("[VOX HUB] could not start: " .. tostring(__vox_res))
+local NullLib = {}
+setmetatable(NullLib, {__index = function() return function() return NullLib end end, __call = function() return NullLib end})
+return NullLib
